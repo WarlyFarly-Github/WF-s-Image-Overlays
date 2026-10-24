@@ -32,6 +32,12 @@ public class MoveScreen extends Screen {
 	private static final int TRASH_ICON = 32;  // 16px texture drawn at 2x
 	private static final int TRASH_MARGIN = 10;
 
+	private static final Identifier ICON_UNDO = Identifier.fromNamespaceAndPath(
+			ImageOverlayClient.MOD_ID, "textures/gui/undo.png");
+	private static final Identifier ICON_REDO = Identifier.fromNamespaceAndPath(
+			ImageOverlayClient.MOD_ID, "textures/gui/redo.png");
+	private static final int BUTTON_GAP = 6;
+
 	private static final int HANDLE = 8;       // drawn size of a corner handle
 	private static final int HANDLE_HIT = 6;   // grab radius around a corner
 	private static final int MIN_SIZE = 16;
@@ -51,6 +57,9 @@ public class MoveScreen extends Screen {
 	private float startH;
 
 	private boolean shiftHeld;
+	private boolean ctrlHeld;
+	/** State of the image when the current drag/resize began (for undo). */
+	private UndoHistory.State gestureStart;
 	private int lastMouseX;
 	private int lastMouseY;
 
@@ -77,11 +86,14 @@ public class MoveScreen extends Screen {
 		OverlayRenderer.draw(graphics, true, active);
 		drawHandles(graphics, mouseX, mouseY);
 		drawTrash(graphics, mouseX, mouseY);
+		drawHistoryButton(graphics, undoX(), ICON_UNDO, UndoHistory.canUndo(), mouseX, mouseY);
+		drawHistoryButton(graphics, redoX(), ICON_REDO, UndoHistory.canRedo(), mouseX, mouseY);
 
 		Font f = this.font;
 		String[] lines = {
 				"Drag to move  |  Drag a corner to resize (hold SHIFT to keep the shape)",
-				"Drop on the trash can to delete  |  R resets an image's shape  |  ESC or the Move key to finish"
+				"Drop on the trash can to delete  |  R resets an image's shape",
+				"Undo / redo buttons or Ctrl+Z / Ctrl+Y  |  ESC or the Move key to finish"
 		};
 		for (int i = 0; i < lines.length; i++) {
 			graphics.text(f, lines[i], (this.width - f.width(lines[i])) / 2, 8 + i * 12,
@@ -138,6 +150,43 @@ public class MoveScreen extends Screen {
 				x + off, y + off, 0f, 0f, TRASH_ICON, TRASH_ICON, 16, 16, 16, 16);
 	}
 
+	// ------------------------------------------------------------------ undo / redo buttons
+
+	private int redoX() {
+		return trashX() - TRASH_BOX - BUTTON_GAP;
+	}
+
+	private int undoX() {
+		return redoX() - TRASH_BOX - BUTTON_GAP;
+	}
+
+	private boolean inBox(double mx, double my, int x) {
+		return mx >= x && mx < x + TRASH_BOX && my >= trashY() && my < trashY() + TRASH_BOX;
+	}
+
+	private void drawHistoryButton(GuiGraphicsExtractor graphics, int x, Identifier icon,
+	                               boolean enabled, int mouseX, int mouseY) {
+		int y = trashY();
+		boolean hover = enabled && resizing == null && dragging == null && inBox(mouseX, mouseY, x);
+		graphics.fill(x, y, x + TRASH_BOX, y + TRASH_BOX, hover ? 0xB0307030 : 0x90000000);
+		graphics.outline(x, y, TRASH_BOX, TRASH_BOX, hover ? 0xFF55FF55 : 0x90FFFFFF);
+
+		int off = (TRASH_BOX - TRASH_ICON) / 2;
+		graphics.blit(RenderPipelines.GUI_TEXTURED, icon,
+				x + off, y + off, 0f, 0f, TRASH_ICON, TRASH_ICON, 16, 16, 16, 16);
+		if (!enabled) { // grey it out
+			graphics.fill(x + off, y + off, x + off + TRASH_ICON, y + off + TRASH_ICON, 0x90000000);
+		}
+	}
+
+	private void doUndo() {
+		if (resizing == null && dragging == null) UndoHistory.undo();
+	}
+
+	private void doRedo() {
+		if (resizing == null && dragging == null) UndoHistory.redo();
+	}
+
 	// ------------------------------------------------------------------ hit testing
 
 	private static int cornerX(ImageEntry e, int c) {
@@ -176,6 +225,16 @@ public class MoveScreen extends Screen {
 			double my = event.y();
 			List<ImageEntry> list = ImageManager.entries();
 
+			// 0) undo / redo buttons
+			if (inBox(mx, my, undoX())) {
+				doUndo();
+				return true;
+			}
+			if (inBox(mx, my, redoX())) {
+				doRedo();
+				return true;
+			}
+
 			// 1) corner handles (top-most image first)
 			for (int i = list.size() - 1; i >= 0; i--) {
 				ImageEntry e = list.get(i);
@@ -188,6 +247,7 @@ public class MoveScreen extends Screen {
 					anchorY = cornerY(e, 3 - c);
 					startW = e.drawW();
 					startH = e.drawH();
+					gestureStart = UndoHistory.State.of(e);
 					ImageManager.bringToFront(e);
 					return true;
 				}
@@ -199,6 +259,7 @@ public class MoveScreen extends Screen {
 				dragging = hit;
 				grabX = (int) mx - hit.x;
 				grabY = (int) my - hit.y;
+				gestureStart = UndoHistory.State.of(hit);
 				ImageManager.bringToFront(hit);
 				return true;
 			}
@@ -251,16 +312,19 @@ public class MoveScreen extends Screen {
 	@Override
 	public boolean mouseReleased(MouseButtonEvent event) {
 		if (resizing != null) {
+			ImageEntry done = resizing;
 			resizing = null;
+			if (gestureStart != null) UndoHistory.recordEdit(done, gestureStart);
 			ImageManager.save();
 			return true;
 		}
 		if (dragging != null) {
 			ImageEntry released = dragging;
 			dragging = null;
-			if (overTrash(event.x(), event.y())) {
-				ImageManager.remove(released); // also frees its texture and saves
+			if (overTrash(event.x(), event.y()) && gestureStart != null) {
+				ImageManager.trash(released, gestureStart); // keeps the texture so Undo can bring it back
 			} else {
+				if (gestureStart != null) UndoHistory.recordEdit(released, gestureStart);
 				ImageManager.save();
 			}
 			return true;
@@ -274,11 +338,27 @@ public class MoveScreen extends Screen {
 		return event.key() == InputConstants.KEY_LSHIFT || event.key() == InputConstants.KEY_RSHIFT;
 	}
 
+	private static boolean isCtrl(KeyEvent event) {
+		return event.key() == InputConstants.KEY_LCONTROL || event.key() == InputConstants.KEY_RCONTROL;
+	}
+
 	@Override
 	public boolean keyPressed(KeyEvent event) {
 		if (isShift(event)) {
 			shiftHeld = true;
 			return true; // handled here; never reaches the player
+		}
+		if (isCtrl(event)) {
+			ctrlHeld = true;
+			return true;
+		}
+		if (ctrlHeld && event.key() == InputConstants.KEY_Z) {
+			if (shiftHeld) doRedo(); else doUndo(); // Ctrl+Shift+Z = redo
+			return true;
+		}
+		if (ctrlHeld && event.key() == InputConstants.KEY_Y) {
+			doRedo();
+			return true;
 		}
 		if (ImageOverlayClient.moveKey.matches(event)) {
 			this.onClose();
@@ -286,8 +366,10 @@ public class MoveScreen extends Screen {
 		}
 		if (event.key() == InputConstants.KEY_R) {
 			ImageEntry e = topAt(lastMouseX, lastMouseY);
-			if (e != null) {
+			if (e != null && resizing == null && dragging == null) {
+				UndoHistory.State before = UndoHistory.State.of(e);
 				e.stretchY = 1f; // back to the image's original shape
+				UndoHistory.recordEdit(e, before);
 				ImageManager.save();
 				return true;
 			}
@@ -299,6 +381,10 @@ public class MoveScreen extends Screen {
 	public boolean keyReleased(KeyEvent event) {
 		if (isShift(event)) {
 			shiftHeld = false;
+			return true;
+		}
+		if (isCtrl(event)) {
+			ctrlHeld = false;
 			return true;
 		}
 		return super.keyReleased(event);

@@ -105,6 +105,7 @@ public final class ImageManager {
 	/** Called when you leave a world/server: saves, frees the textures and empties the list. */
 	public static void unload() {
 		if (currentFile != null) save();
+		UndoHistory.clear();
 		for (ImageEntry e : ENTRIES) e.release();
 		ENTRIES.clear();
 		currentKey = null;
@@ -158,9 +159,37 @@ public final class ImageManager {
 		return e;
 	}
 
+	/** Permanent removal (menu "Remove" button). Not undoable. */
 	public static void remove(ImageEntry e) {
+		UndoHistory.forget(e);
 		ENTRIES.remove(e);
 		e.release();
+		save();
+	}
+
+	/** Trash can in drag mode: removes the image but keeps its texture so it can be undone. */
+	public static void trash(ImageEntry e, UndoHistory.State before) {
+		int index = ENTRIES.indexOf(e);
+		if (index < 0) return;
+		ENTRIES.remove(e);
+		before.applyTo(e); // so an undo puts it back where it was before the drag
+		UndoHistory.recordDelete(e, before, index);
+		save();
+	}
+
+	/** Redo of a trash: out of the list again, texture still kept. */
+	public static void detach(ImageEntry e) {
+		ENTRIES.remove(e);
+		save();
+	}
+
+	/** Undo of a trash: back into the list (re-downloads only if its texture is gone). */
+	public static void restore(ImageEntry e, int index) {
+		if (!ENTRIES.contains(e)) ENTRIES.add(Math.max(0, Math.min(index, ENTRIES.size())), e);
+		if (!e.isReady()) {
+			e.status = ImageEntry.Status.IDLE;
+			load(e);
+		}
 		save();
 	}
 

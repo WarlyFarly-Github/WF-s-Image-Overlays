@@ -67,8 +67,7 @@ public class ImageMenuScreen extends Screen {
 			rowEntries.add(entry);
 			this.addRenderableWidget(Button.builder(Component.literal("Remove"), b -> {
 				savedText = urlBox.getValue();
-				ImageManager.remove(entry);
-				this.rebuildWidgets();
+				Minecraft.getInstance().gui.setScreen(new ConfirmRemoveScreen(this, entry));
 			}).bounds(cx + 90, LIST_TOP + i * ROW_H, 60, 20).build());
 		}
 
