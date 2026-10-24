@@ -1,0 +1,19 @@
+{
+	"schemaVersion": 1,
+	"id": "imageoverlay",
+	"version": "${version}",
+	"name": "Image Overlay",
+	"description": "Paste image URLs in a menu and show them as draggable on-screen overlays.",
+	"authors": ["You"],
+	"license": "MIT",
+	"environment": "client",
+	"entrypoints": {
+		"client": ["com.example.imageoverlay.ImageOverlayClient"]
+	},
+	"depends": {
+		"fabricloader": ">=0.19.5",
+		"minecraft": "~26.3",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}
