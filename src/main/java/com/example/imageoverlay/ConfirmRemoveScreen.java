@@ -30,11 +30,11 @@ public class ConfirmRemoveScreen extends Screen {
 		this.addRenderableWidget(Button.builder(Component.literal("Remove permanently"), b -> {
 			ImageManager.remove(entry);
 			Minecraft.getInstance().gui.setScreen(parent); // menu rebuilds its list when it reopens
-		}).bounds(cx - 155, y, 150, 20).build());
+		}).bounds(cx + 5, y, 150, 20).build());
 
 		Button cancel = Button.builder(
 				Component.literal("Cancel").withStyle(ChatFormatting.BOLD),
-				b -> this.onClose()).bounds(cx + 5, y, 150, 20).build();
+				b -> this.onClose()).bounds(cx - 155, y, 150, 20).build();
 		this.addRenderableWidget(cancel);
 		this.setInitialFocus(cancel); // the safe choice is the default
 	}
