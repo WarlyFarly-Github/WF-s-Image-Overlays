@@ -14,3 +14,5 @@ Requires JDK 25.
     gradle wrapper --gradle-version 9.5.1   # once, if gradlew is missing
     ./gradlew build                          # jar in build/libs/
     ./gradlew runClient                      # test in a dev client
+
+Note: This was AI coded, I did not create any of this code myself.
