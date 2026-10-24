@@ -17,7 +17,6 @@ import java.util.List;
  * Drag mode:
  *  - drag an image to move it
  *  - drag a corner to resize it (free-form; hold SHIFT to keep its current shape)
- *  - scroll over an image to zoom it
  *  - drop an image on the trash can to delete it
  *  - press R over an image to reset its shape
  *
@@ -81,7 +80,7 @@ public class MoveScreen extends Screen {
 
 		Font f = this.font;
 		String[] lines = {
-				"Drag to move  |  Drag a corner to resize (hold SHIFT to keep the shape)  |  Scroll to zoom",
+				"Drag to move  |  Drag a corner to resize (hold SHIFT to keep the shape)",
 				"Drop on the trash can to delete  |  R resets an image's shape  |  ESC or the Move key to finish"
 		};
 		for (int i = 0; i < lines.length; i++) {
@@ -267,17 +266,6 @@ public class MoveScreen extends Screen {
 			return true;
 		}
 		return super.mouseReleased(event);
-	}
-
-	@Override
-	public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
-		ImageEntry e = resizing != null ? resizing : dragging != null ? dragging : topAt(mouseX, mouseY);
-		if (e != null && e.isReady() && scrollY != 0) {
-			float factor = scrollY > 0 ? 1.1f : 1f / 1.1f;
-			e.scale = Math.max(0.05f, Math.min(10f, e.scale * factor)); // keeps the current shape
-			return true;
-		}
-		return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
 	}
 
 	// ------------------------------------------------------------------ keyboard
