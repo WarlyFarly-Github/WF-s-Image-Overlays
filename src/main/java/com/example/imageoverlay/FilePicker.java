@@ -2,15 +2,18 @@ package com.example.imageoverlay;
 
 import net.minecraft.client.Minecraft;
 
-import java.awt.FileDialog;
-import java.awt.Frame;
-import java.awt.GraphicsEnvironment;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.function.Consumer;
 
 /**
- * Opens the operating system's "open file" dialog on a background thread
- * (a blocking native dialog on the game thread would freeze Minecraft).
+ * Opens the operating system's native "open file" dialog by launching a small helper process
+ * (PowerShell on Windows, osascript on macOS, zenity/kdialog on Linux).
+ *
+ * Java's own AWT dialogs can't be used: Minecraft runs Java in headless mode.
+ * The dialog runs on a background thread so the game never freezes.
  */
 public final class FilePicker {
 	private static volatile boolean open = false;
@@ -23,7 +26,7 @@ public final class FilePicker {
 
 	/**
 	 * @param onPick  called on the game thread with the chosen file
-	 * @param onError called on the game thread with a short message if the dialog is unavailable
+	 * @param onError called on the game thread with a short message if no dialog could be shown
 	 */
 	public static void pickImage(Consumer<Path> onPick, Consumer<String> onError) {
 		if (open) return;
@@ -33,25 +36,15 @@ public final class FilePicker {
 			Path chosen = null;
 			String error = null;
 			try {
-				if (GraphicsEnvironment.isHeadless()) {
-					throw new IllegalStateException("file dialogs are unavailable here");
+				String out = runDialog();
+				if (out == null) {
+					error = "No file dialog available - paste the file path instead";
+				} else if (!out.isBlank()) {
+					chosen = Path.of(out.strip());
 				}
-				FileDialog fd = new FileDialog((Frame) null, "Choose an image", FileDialog.LOAD);
-				fd.setFile("*.png;*.jpg;*.jpeg;*.gif;*.bmp"); // honoured on Windows
-				fd.setFilenameFilter((dir, name) -> {
-					String n = name.toLowerCase();
-					return n.endsWith(".png") || n.endsWith(".jpg") || n.endsWith(".jpeg")
-							|| n.endsWith(".gif") || n.endsWith(".bmp");
-				});
-				fd.setAlwaysOnTop(true);
-				fd.setVisible(true); // blocks this thread until the user closes the dialog
-				String dir = fd.getDirectory();
-				String file = fd.getFile();
-				fd.dispose();
-				if (dir != null && file != null) chosen = Path.of(dir, file);
 			} catch (Throwable ex) {
-				error = "Could not open file dialog (" + ex.getClass().getSimpleName()
-						+ "). Paste the file path instead, or drag the file onto this window.";
+				error = "File dialog failed - paste the file path instead";
+				System.err.println("[imageoverlay] File dialog error: " + ex);
 			} finally {
 				open = false;
 			}
@@ -65,5 +58,49 @@ public final class FilePicker {
 		}, "ImageOverlay-FileDialog");
 		t.setDaemon(true);
 		t.start();
+	}
+
+	/** @return the chosen path, "" if the user cancelled, or null if no dialog program could be started. */
+	private static String runDialog() throws InterruptedException {
+		String os = System.getProperty("os.name", "").toLowerCase();
+
+		if (os.contains("win")) {
+			String script = String.join("; ",
+					"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
+					"Add-Type -AssemblyName System.Windows.Forms",
+					"$owner = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true }",
+					"$d = New-Object System.Windows.Forms.OpenFileDialog",
+					"$d.Title = 'Choose an image'",
+					"$d.Filter = 'Images (*.png;*.jpg;*.jpeg;*.gif;*.bmp)|*.png;*.jpg;*.jpeg;*.gif;*.bmp|All files (*.*)|*.*'",
+					"if ($d.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write($d.FileName) }");
+			return run(List.of("powershell.exe", "-NoProfile", "-STA", "-NonInteractive", "-Command", script));
+		}
+
+		if (os.contains("mac")) {
+			return run(List.of("osascript", "-e",
+					"POSIX path of (choose file with prompt \"Choose an image\" of type {\"public.image\"})"));
+		}
+
+		// Linux / BSD: try zenity, then kdialog
+		String filters = "*.png *.jpg *.jpeg *.gif *.bmp";
+		String r = run(List.of("zenity", "--file-selection", "--title=Choose an image",
+				"--file-filter=Images | " + filters));
+		if (r != null) return r;
+		return run(List.of("kdialog", "--getopenfilename", System.getProperty("user.home", "."),
+				filters + "|Images"));
+	}
+
+	private static String run(List<String> command) throws InterruptedException {
+		try {
+			Process p = new ProcessBuilder(command)
+					.redirectError(ProcessBuilder.Redirect.DISCARD)
+					.start();
+			p.getOutputStream().close();
+			String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+			p.waitFor();
+			return out; // empty when cancelled
+		} catch (IOException notInstalled) {
+			return null;
+		}
 	}
 }
