@@ -5,15 +5,25 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 
 import java.util.List;
 
-/** Drag mode: drag images with the left mouse button, resize with the scroll wheel. */
+/**
+ * Drag mode:
+ *  - drag an image to move it
+ *  - drag a corner to resize it (free-form; hold SHIFT to keep its current shape)
+ *  - scroll over an image to zoom it
+ *  - drop an image on the trash can to delete it
+ *  - press R over an image to reset its shape
+ *
+ * Because this is a Screen, Minecraft does not register movement keys while it is open,
+ * so holding SHIFT here never makes the player crouch (and no sneak state is sent to servers).
+ */
 public class MoveScreen extends Screen {
 	private static final Identifier TRASH_CLOSED = Identifier.fromNamespaceAndPath(
 			ImageOverlayClient.MOD_ID, "textures/gui/trashcan.png");
@@ -23,9 +33,27 @@ public class MoveScreen extends Screen {
 	private static final int TRASH_ICON = 32;  // 16px texture drawn at 2x
 	private static final int TRASH_MARGIN = 10;
 
+	private static final int HANDLE = 8;       // drawn size of a corner handle
+	private static final int HANDLE_HIT = 6;   // grab radius around a corner
+	private static final int MIN_SIZE = 16;
+	private static final int MAX_SIZE = 4000;
+
+	// moving
 	private ImageEntry dragging;
 	private int grabX;
 	private int grabY;
+
+	// resizing
+	private ImageEntry resizing;
+	private int corner;            // 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right
+	private int anchorX;           // the opposite corner stays fixed while resizing
+	private int anchorY;
+	private float startW;
+	private float startH;
+
+	private boolean shiftHeld;
+	private int lastMouseX;
+	private int lastMouseY;
 
 	public MoveScreen() {
 		super(Component.literal("Move Images"));
@@ -36,26 +64,53 @@ public class MoveScreen extends Screen {
 		return false;
 	}
 
+	// ------------------------------------------------------------------ rendering
+
 	@Override
 	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
+		lastMouseX = mouseX;
+		lastMouseY = mouseY;
+
 		// Deliberately not calling super: no blurred menu background, so you see the world as-is.
 		graphics.fill(0, 0, this.width, this.height, 0x30000000);
 
-		ImageEntry hover = dragging != null ? dragging : topAt(mouseX, mouseY);
-		OverlayRenderer.draw(graphics, true, hover);
-
-		Font f = this.font;
-		String l1 = "Drag images with left mouse  |  Scroll over an image to resize";
-		String l2 = "Drag an image onto the trash can to delete it  |  ESC or the Move key to finish";
-		graphics.text(f, l1, (this.width - f.width(l1)) / 2, 8, 0xFFFFFFFF);
-		graphics.text(f, l2, (this.width - f.width(l2)) / 2, 20, 0xFFAAAAAA);
+		ImageEntry active = resizing != null ? resizing : dragging != null ? dragging : topAt(mouseX, mouseY);
+		OverlayRenderer.draw(graphics, true, active);
+		drawHandles(graphics, mouseX, mouseY);
 		drawTrash(graphics, mouseX, mouseY);
 
+		Font f = this.font;
+		String[] lines = {
+				"Drag to move  |  Drag a corner to resize (hold SHIFT to keep the shape)  |  Scroll to zoom",
+				"Drop on the trash can to delete  |  R resets an image's shape  |  ESC or the Move key to finish"
+		};
+		for (int i = 0; i < lines.length; i++) {
+			graphics.text(f, lines[i], (this.width - f.width(lines[i])) / 2, 8 + i * 12,
+					i == 0 ? 0xFFFFFFFF : 0xFFAAAAAA);
+		}
 		if (ImageManager.entries().isEmpty()) {
 			String l3 = "No images yet. Open the image menu to add some.";
 			graphics.text(f, l3, (this.width - f.width(l3)) / 2, this.height / 2, 0xFFFFFF80);
 		}
 	}
+
+	private void drawHandles(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
+		for (ImageEntry e : ImageManager.entries()) {
+			if (!e.isReady()) continue;
+			for (int c = 0; c < 4; c++) {
+				int cx = cornerX(e, c);
+				int cy = cornerY(e, c);
+				boolean hot = (resizing == e && corner == c)
+						|| (resizing == null && dragging == null && cornerAt(e, mouseX, mouseY) == c);
+				int x0 = cx - HANDLE / 2;
+				int y0 = cy - HANDLE / 2;
+				graphics.fill(x0, y0, x0 + HANDLE, y0 + HANDLE, hot ? 0xFF55FF55 : 0xFFFFFFFF);
+				graphics.outline(x0, y0, HANDLE, HANDLE, 0xFF000000);
+			}
+		}
+	}
+
+	// ------------------------------------------------------------------ trash can
 
 	private int trashX() {
 		return this.width - TRASH_BOX - TRASH_MARGIN;
@@ -84,6 +139,27 @@ public class MoveScreen extends Screen {
 				x + off, y + off, 0f, 0f, TRASH_ICON, TRASH_ICON, 16, 16, 16, 16);
 	}
 
+	// ------------------------------------------------------------------ hit testing
+
+	private static int cornerX(ImageEntry e, int c) {
+		return (c == 0 || c == 2) ? e.x : e.x + e.drawW();
+	}
+
+	private static int cornerY(ImageEntry e, int c) {
+		return (c == 0 || c == 1) ? e.y : e.y + e.drawH();
+	}
+
+	/** @return corner index under the point, or -1 */
+	private static int cornerAt(ImageEntry e, double mx, double my) {
+		if (!e.isReady()) return -1;
+		for (int c = 0; c < 4; c++) {
+			if (Math.abs(mx - cornerX(e, c)) <= HANDLE_HIT && Math.abs(my - cornerY(e, c)) <= HANDLE_HIT) {
+				return c;
+			}
+		}
+		return -1;
+	}
+
 	private ImageEntry topAt(double mx, double my) {
 		List<ImageEntry> list = ImageManager.entries();
 		for (int i = list.size() - 1; i >= 0; i--) {
@@ -92,14 +168,38 @@ public class MoveScreen extends Screen {
 		return null;
 	}
 
+	// ------------------------------------------------------------------ mouse
+
 	@Override
 	public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
 		if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
-			ImageEntry hit = topAt(event.x(), event.y());
+			double mx = event.x();
+			double my = event.y();
+			List<ImageEntry> list = ImageManager.entries();
+
+			// 1) corner handles (top-most image first)
+			for (int i = list.size() - 1; i >= 0; i--) {
+				ImageEntry e = list.get(i);
+				int c = cornerAt(e, mx, my);
+				if (c >= 0) {
+					resizing = e;
+					corner = c;
+					// the opposite corner is the fixed anchor
+					anchorX = cornerX(e, 3 - c);
+					anchorY = cornerY(e, 3 - c);
+					startW = e.drawW();
+					startH = e.drawH();
+					ImageManager.bringToFront(e);
+					return true;
+				}
+			}
+
+			// 2) image body -> move
+			ImageEntry hit = topAt(mx, my);
 			if (hit != null) {
 				dragging = hit;
-				grabX = (int) event.x() - hit.x;
-				grabY = (int) event.y() - hit.y;
+				grabX = (int) mx - hit.x;
+				grabY = (int) my - hit.y;
 				ImageManager.bringToFront(hit);
 				return true;
 			}
@@ -109,18 +209,53 @@ public class MoveScreen extends Screen {
 
 	@Override
 	public boolean mouseDragged(MouseButtonEvent event, double dx, double dy) {
-		if (dragging != null && event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
-			int nx = (int) event.x() - grabX;
-			int ny = (int) event.y() - grabY;
-			dragging.x = Math.max(-dragging.drawW() + 10, Math.min(this.width - 10, nx));
-			dragging.y = Math.max(-dragging.drawH() + 10, Math.min(this.height - 10, ny));
-			return true;
+		if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+			if (resizing != null) {
+				resizeTo(event.x(), event.y());
+				return true;
+			}
+			if (dragging != null) {
+				int nx = (int) event.x() - grabX;
+				int ny = (int) event.y() - grabY;
+				dragging.x = Math.max(-dragging.drawW() + 10, Math.min(this.width - 10, nx));
+				dragging.y = Math.max(-dragging.drawH() + 10, Math.min(this.height - 10, ny));
+				return true;
+			}
 		}
 		return super.mouseDragged(event, dx, dy);
 	}
 
+	private void resizeTo(double mx, double my) {
+		ImageEntry e = resizing;
+		boolean left = (corner == 0 || corner == 2);
+		boolean top = (corner == 0 || corner == 1);
+
+		// distance from the fixed corner to the cursor (never flips past the anchor)
+		float w = (float) (left ? anchorX - mx : mx - anchorX);
+		float h = (float) (top ? anchorY - my : my - anchorY);
+		w = Math.max(MIN_SIZE, Math.min(MAX_SIZE, w));
+		h = Math.max(MIN_SIZE, Math.min(MAX_SIZE, h));
+
+		if (shiftHeld) {
+			// keep the shape the image had when the drag started; follow whichever axis moved more
+			float s = Math.max(w / startW, h / startH);
+			w = startW * s;
+			h = startH * s;
+		}
+
+		e.x = Math.round(left ? anchorX - w : anchorX);
+		e.y = Math.round(top ? anchorY - h : anchorY);
+		e.scale = w / e.texW;
+		e.stretchY = h / (e.texH * e.scale);
+	}
+
 	@Override
 	public boolean mouseReleased(MouseButtonEvent event) {
+		if (resizing != null) {
+			resizing = null;
+			ImageManager.save();
+			return true;
+		}
 		if (dragging != null) {
 			ImageEntry released = dragging;
 			dragging = null;
@@ -136,22 +271,49 @@ public class MoveScreen extends Screen {
 
 	@Override
 	public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
-		ImageEntry e = dragging != null ? dragging : topAt(mouseX, mouseY);
+		ImageEntry e = resizing != null ? resizing : dragging != null ? dragging : topAt(mouseX, mouseY);
 		if (e != null && e.isReady() && scrollY != 0) {
 			float factor = scrollY > 0 ? 1.1f : 1f / 1.1f;
-			e.scale = Math.max(0.05f, Math.min(10f, e.scale * factor));
+			e.scale = Math.max(0.05f, Math.min(10f, e.scale * factor)); // keeps the current shape
 			return true;
 		}
 		return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
 	}
 
+	// ------------------------------------------------------------------ keyboard
+
+	private static boolean isShift(KeyEvent event) {
+		return event.key() == InputConstants.KEY_LSHIFT || event.key() == InputConstants.KEY_RSHIFT;
+	}
+
 	@Override
 	public boolean keyPressed(KeyEvent event) {
+		if (isShift(event)) {
+			shiftHeld = true;
+			return true; // handled here; never reaches the player
+		}
 		if (ImageOverlayClient.moveKey.matches(event)) {
 			this.onClose();
 			return true;
 		}
+		if (event.key() == InputConstants.KEY_R) {
+			ImageEntry e = topAt(lastMouseX, lastMouseY);
+			if (e != null) {
+				e.stretchY = 1f; // back to the image's original shape
+				ImageManager.save();
+				return true;
+			}
+		}
 		return super.keyPressed(event);
+	}
+
+	@Override
+	public boolean keyReleased(KeyEvent event) {
+		if (isShift(event)) {
+			shiftHeld = false;
+			return true;
+		}
+		return super.keyReleased(event);
 	}
 
 	@Override

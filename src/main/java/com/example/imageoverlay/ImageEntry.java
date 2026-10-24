@@ -12,6 +12,8 @@ public class ImageEntry {
 	public int y = 20;
 	/** 0 = "not set yet"; set automatically on first successful load. */
 	public float scale = 0f;
+	/** Vertical stretch on top of {@code scale}: 1 = original shape. Changed by dragging a corner. */
+	public float stretchY = 1f;
 
 	public transient volatile Status status = Status.IDLE;
 	public transient volatile String error = "";
@@ -34,7 +36,7 @@ public class ImageEntry {
 	}
 
 	public int drawH() {
-		return isReady() ? Math.max(8, Math.round(texH * scale)) : 20;
+		return isReady() ? Math.max(8, Math.round(texH * scale * stretchY)) : 20;
 	}
 
 	public boolean contains(double mx, double my) {
