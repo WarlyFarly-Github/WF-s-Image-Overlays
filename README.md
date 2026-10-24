@@ -2,6 +2,9 @@
 
 Client-side mod. Paste image URLs in a menu; they show as an on-screen overlay you can drag around.
 
+<img width="1914" height="1005" alt="image" src="https://github.com/user-attachments/assets/b5e8c600-7114-4b23-9740-5c5afdee1bf5" />
+
+
 ## Controls (rebindable under Options > Controls > Key Binds > Image Overlay)
 - **J** - open the URL menu (paste URL, Add / Enter, Remove, toggle overlay)
 - **K** - drag mode: left-drag an image to move it, scroll wheel over it to resize, ESC / K to finish
