@@ -4,12 +4,11 @@ A Claude-coded image overlay mod for Minecraft Fabric 26.3.
 
 Paste image URLs into an in-game menu and show them as an on-screen overlay. Drag them wherever you like.
 
-<img width="1914" height="1005" alt="image" src="https://github.com/user-attachments/assets/1bd33abb-63d8-4d12-a9f2-154a8872d1d3" />
-
-<img width="1920" height="999" alt="image" src="https://github.com/user-attachments/assets/6df6b4b5-e889-4cc5-8e99-016d26adf3cf" />
-
-<img width="1919" height="999" alt="image" src="https://github.com/user-attachments/assets/9dcbcd45-e450-4eb8-b6d9-d9d1c2a5ec12" />
-
+<p>
+  <img width="300" alt="Image menu" src="https://github.com/user-attachments/assets/1bd33abb-63d8-4d12-a9f2-154a8872d1d3" />
+  <img width="300" alt="Overlay in game" src="https://github.com/user-attachments/assets/6df6b4b5-e889-4cc5-8e99-016d26adf3cf" />
+  <img width="300" alt="Drag mode" src="https://github.com/user-attachments/assets/9dcbcd45-e450-4eb8-b6d9-d9d1c2a5ec12" />
+</p>
 
 ## Features
 
