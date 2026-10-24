@@ -2,10 +2,11 @@
 	"schemaVersion": 1,
 	"id": "imageoverlay",
 	"version": "${version}",
-	"name": "Image Overlay",
+	"name": "WF's Image Overlays",
 	"description": "Paste image URLs in a menu and show them as draggable on-screen overlays.",
-	"authors": ["You"],
+	"authors": ["WarlyFarly"],
 	"license": "MIT",
+	"icon": "assets/imageoverlay/icon.png",
 	"environment": "client",
 	"entrypoints": {
 		"client": ["com.example.imageoverlay.ImageOverlayClient"]
