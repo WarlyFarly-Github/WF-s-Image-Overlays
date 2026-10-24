@@ -22,6 +22,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -31,7 +32,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 /** Holds the list of overlay images, saves/loads them, and downloads their textures. */
 public final class ImageManager {
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-	private static final Path FILE = FabricLoader.getInstance().getConfigDir().resolve("imageoverlay.json");
+	private static final Path CONFIG_DIR = FabricLoader.getInstance().getConfigDir();
+	/** The old single global list (versions before per-world support). */
+	private static final Path LEGACY_FILE = CONFIG_DIR.resolve("imageoverlay.json");
+	/** One file per world/server lives here. */
+	private static final Path WORLD_DIR = CONFIG_DIR.resolve("imageoverlay").resolve("worlds");
 	private static final HttpClient HTTP = HttpClient.newBuilder()
 			.followRedirects(HttpClient.Redirect.NORMAL)
 			.connectTimeout(Duration.ofSeconds(10))
@@ -44,8 +49,12 @@ public final class ImageManager {
 
 	private static final List<ImageEntry> ENTRIES = new ArrayList<>();
 	private static boolean visible = true;
+	/** Identifies the world/server whose overlays are currently loaded (null = none). */
+	private static String currentKey;
+	private static Path currentFile;
 
 	private static class Config {
+		String world;
 		List<ImageEntry> images = new ArrayList<>();
 		boolean visible = true;
 	}
@@ -65,40 +74,75 @@ public final class ImageManager {
 		save();
 	}
 
-	// ---------------------------------------------------------------- persistence
+	// ---------------------------------------------------------------- persistence (one file per world/server)
 
-	public static void loadConfig() {
+	/** Called when you join a world or server: loads that world's own overlay list. */
+	public static void switchTo(String key) {
+		if (key.equals(currentKey)) return;
+		unload();
+
+		currentKey = key;
+		currentFile = WORLD_DIR.resolve(fileNameFor(key));
+		visible = true;
+
 		try {
-			if (Files.exists(FILE)) {
-				Config c = GSON.fromJson(Files.readString(FILE), Config.class);
-				if (c != null) {
-					ENTRIES.clear();
-					if (c.images != null) {
-						for (ImageEntry e : c.images) {
-							if (e != null && e.url != null) ENTRIES.add(e);
-						}
-					}
-					visible = c.visible;
-				}
+			if (Files.exists(currentFile)) {
+				readInto(currentFile);
+			} else if (Files.exists(LEGACY_FILE)) {
+				// One-time migration: the first world you join after updating inherits the old global list.
+				readInto(LEGACY_FILE);
+				Files.move(LEGACY_FILE, LEGACY_FILE.resolveSibling("imageoverlay.json.bak"),
+						StandardCopyOption.REPLACE_EXISTING);
+				save();
 			}
 		} catch (Exception ex) {
-			System.err.println("[imageoverlay] Could not read config: " + ex);
+			System.err.println("[imageoverlay] Could not read overlays for " + key + ": " + ex);
+		}
+
+		for (ImageEntry e : ENTRIES) load(e);
+	}
+
+	/** Called when you leave a world/server: saves, frees the textures and empties the list. */
+	public static void unload() {
+		if (currentFile != null) save();
+		for (ImageEntry e : ENTRIES) e.release();
+		ENTRIES.clear();
+		currentKey = null;
+		currentFile = null;
+	}
+
+	private static void readInto(Path file) throws IOException {
+		Config c = GSON.fromJson(Files.readString(file), Config.class);
+		ENTRIES.clear();
+		if (c != null) {
+			if (c.images != null) {
+				for (ImageEntry e : c.images) {
+					if (e != null && e.url != null) ENTRIES.add(e);
+				}
+			}
+			visible = c.visible;
 		}
 	}
 
 	public static void save() {
+		if (currentFile == null) return;
 		try {
+			Files.createDirectories(currentFile.getParent());
 			Config c = new Config();
+			c.world = currentKey;
 			c.images = ENTRIES;
 			c.visible = visible;
-			Files.writeString(FILE, GSON.toJson(c));
+			Files.writeString(currentFile, GSON.toJson(c));
 		} catch (IOException ex) {
 			System.err.println("[imageoverlay] Could not save config: " + ex);
 		}
 	}
 
-	public static void loadAllTextures() {
-		for (ImageEntry e : ENTRIES) load(e);
+	/** Safe, unique file name for a world key (readable prefix + hash so different keys never collide). */
+	private static String fileNameFor(String key) {
+		String safe = key.toLowerCase().replaceAll("[^a-z0-9._-]+", "_");
+		if (safe.length() > 60) safe = safe.substring(0, 60);
+		return safe + "-" + Integer.toHexString(key.hashCode()) + ".json";
 	}
 
 	// ---------------------------------------------------------------- list ops
@@ -149,6 +193,7 @@ public final class ImageManager {
 
 				Minecraft mc = Minecraft.getInstance();
 				mc.execute(() -> {
+					if (!ENTRIES.contains(e)) return; // world was left / image removed while downloading
 					try {
 						NativeImage ni = NativeImage.read(new ByteArrayInputStream(png));
 						int id = IDS.incrementAndGet();
