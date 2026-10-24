@@ -133,26 +133,7 @@ public final class ImageManager {
 
 		CompletableFuture.runAsync(() -> {
 			try {
-				URI uri = URI.create(e.url.trim());
-				String scheme = uri.getScheme();
-				if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
-					throw new IOException("Only http(s) URLs are supported");
-				}
-
-				HttpRequest req = HttpRequest.newBuilder(uri)
-						.timeout(Duration.ofSeconds(20))
-						.header("User-Agent", "Mozilla/5.0 (Minecraft ImageOverlay mod)")
-						.GET()
-						.build();
-				HttpResponse<InputStream> resp = HTTP.send(req, HttpResponse.BodyHandlers.ofInputStream());
-				if (resp.statusCode() / 100 != 2) {
-					throw new IOException("HTTP " + resp.statusCode());
-				}
-
-				byte[] data;
-				try (InputStream in = resp.body()) {
-					data = readLimited(in);
-				}
+				byte[] data = fetch(e.url);
 
 				BufferedImage img = ImageIO.read(new ByteArrayInputStream(data));
 				if (img == null) {
@@ -191,6 +172,68 @@ public final class ImageManager {
 				fail(e, ex);
 			}
 		});
+	}
+
+	// ---------------------------------------------------------------- sources (URL or local file)
+
+	/** Strips surrounding quotes (Windows "Copy as path" adds them) and whitespace. */
+	public static String normalize(String input) {
+		String s = input == null ? "" : input.trim();
+		if (s.length() >= 2 && s.startsWith("\"") && s.endsWith("\"")) {
+			s = s.substring(1, s.length() - 1).trim();
+		}
+		return s;
+	}
+
+	public static boolean isWebUrl(String s) {
+		String l = s.toLowerCase();
+		return l.startsWith("http://") || l.startsWith("https://");
+	}
+
+	private static Path toPath(String s) {
+		return s.toLowerCase().startsWith("file:") ? Path.of(URI.create(s)) : Path.of(s);
+	}
+
+	/** True for an http(s) URL or a path to an existing file. */
+	public static boolean isValidSource(String input) {
+		String s = normalize(input);
+		if (s.isEmpty()) return false;
+		if (isWebUrl(s)) return true;
+		try {
+			return Files.isRegularFile(toPath(s));
+		} catch (Exception ex) {
+			return false;
+		}
+	}
+
+	public static boolean hasImageExtension(Path p) {
+		String n = p.getFileName() == null ? "" : p.getFileName().toString().toLowerCase();
+		return n.endsWith(".png") || n.endsWith(".jpg") || n.endsWith(".jpeg")
+				|| n.endsWith(".gif") || n.endsWith(".bmp");
+	}
+
+	private static byte[] fetch(String source) throws IOException, InterruptedException {
+		String s = normalize(source);
+
+		if (isWebUrl(s)) {
+			HttpRequest req = HttpRequest.newBuilder(URI.create(s))
+					.timeout(Duration.ofSeconds(20))
+					.header("User-Agent", "Mozilla/5.0 (Minecraft ImageOverlay mod)")
+					.GET()
+					.build();
+			HttpResponse<InputStream> resp = HTTP.send(req, HttpResponse.BodyHandlers.ofInputStream());
+			if (resp.statusCode() / 100 != 2) {
+				throw new IOException("HTTP " + resp.statusCode());
+			}
+			try (InputStream in = resp.body()) {
+				return readLimited(in);
+			}
+		}
+
+		Path p = toPath(s);
+		if (!Files.isRegularFile(p)) throw new IOException("File not found");
+		if (Files.size(p) > MAX_BYTES) throw new IOException("Image larger than 25 MB");
+		return Files.readAllBytes(p);
 	}
 
 	private static void fail(ImageEntry e, Exception ex) {

@@ -10,13 +10,14 @@ import net.minecraft.client.input.KeyEvent;
 import net.minecraft.network.chat.Component;
 import com.mojang.blaze3d.platform.InputConstants;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
 /** The URL menu: paste a URL, press Add (or Enter), manage the list. */
 public class ImageMenuScreen extends Screen {
 	private static final int ROW_H = 24;
-	private static final int LIST_TOP = 70;
+	private static final int LIST_TOP = 98;
 
 	private EditBox urlBox;
 	private String savedText = "";
@@ -33,7 +34,7 @@ public class ImageMenuScreen extends Screen {
 
 		urlBox = new EditBox(this.font, cx - 150, 30, 200, 20, Component.literal("Image URL"));
 		urlBox.setMaxLength(2048);
-		urlBox.setHint(Component.literal("Paste image URL here..."));
+		urlBox.setHint(Component.literal("Paste image URL or file path..."));
 		urlBox.setValue(savedText);
 		this.addRenderableWidget(urlBox);
 		this.setInitialFocus(urlBox);
@@ -45,6 +46,17 @@ public class ImageMenuScreen extends Screen {
 
 		this.addRenderableWidget(Button.builder(Component.literal("Add"), b -> addUrl())
 				.bounds(cx + 105, 30, 45, 20).build());
+
+		this.addRenderableWidget(Button.builder(Component.literal("Upload from computer..."), b -> {
+			savedText = urlBox.getValue();
+			feedback = "";
+			FilePicker.pickImage(
+					path -> {
+						ImageManager.add(path.toAbsolutePath().toString());
+						if (Minecraft.getInstance().gui.screen() == this) this.rebuildWidgets();
+					},
+					msg -> feedback = msg);
+		}).bounds(cx - 150, 54, 300, 20).build());
 
 		// Per-row "Remove" buttons
 		rowEntries.clear();
@@ -79,15 +91,14 @@ public class ImageMenuScreen extends Screen {
 	}
 
 	private void addUrl() {
-		String url = urlBox.getValue().trim();
-		String lower = url.toLowerCase();
-		if (!(lower.startsWith("http://") || lower.startsWith("https://"))) {
-			feedback = "Enter a full URL starting with http:// or https://";
+		String src = ImageManager.normalize(urlBox.getValue());
+		if (!ImageManager.isValidSource(src)) {
+			feedback = "Enter an http(s) URL, or the full path of an image file on this PC";
 			return;
 		}
 		feedback = "";
 		savedText = "";
-		ImageManager.add(url);
+		ImageManager.add(src);
 		this.rebuildWidgets();
 	}
 
@@ -100,7 +111,7 @@ public class ImageMenuScreen extends Screen {
 		graphics.text(f, "Image Overlay", cx - f.width("Image Overlay") / 2, 12, 0xFFFFFFFF);
 
 		if (!feedback.isEmpty()) {
-			graphics.text(f, feedback, cx - 150, 54, 0xFFFF6060);
+			graphics.text(f, f.plainSubstrByWidth(feedback, 330), cx - 150, 80, 0xFFFF6060);
 		}
 
 		for (int i = 0; i < rowEntries.size(); i++) {
@@ -124,9 +135,23 @@ public class ImageMenuScreen extends Screen {
 			String more = "+" + hidden + " more (remove some to see them)";
 			graphics.text(f, more, cx - 150, this.height - 42, 0xFFAAAAAA);
 		} else if (ImageManager.entries().isEmpty()) {
-			String none = "No images yet - paste a URL above and press Add.";
+			String none = "No images yet - paste a URL, or upload a file.";
 			graphics.text(f, none, cx - f.width(none) / 2, LIST_TOP + 6, 0xFFAAAAAA);
 		}
+	}
+
+	/** Dropping image files onto the game window while this menu is open adds them. (No @Override on purpose.) */
+	public void onFilesDrop(List<Path> paths) {
+		int added = 0;
+		for (Path p : paths) {
+			if (ImageManager.hasImageExtension(p)) {
+				ImageManager.add(p.toAbsolutePath().toString());
+				added++;
+			}
+		}
+		feedback = added == 0 ? "Dropped files must be PNG, JPG, GIF or BMP" : "";
+		savedText = urlBox.getValue();
+		this.rebuildWidgets();
 	}
 
 	@Override

@@ -5,14 +5,24 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 
 import java.util.List;
 
 /** Drag mode: drag images with the left mouse button, resize with the scroll wheel. */
 public class MoveScreen extends Screen {
+	private static final Identifier TRASH_CLOSED = Identifier.fromNamespaceAndPath(
+			ImageOverlayClient.MOD_ID, "textures/gui/trashcan.png");
+	private static final Identifier TRASH_OPEN = Identifier.fromNamespaceAndPath(
+			ImageOverlayClient.MOD_ID, "textures/gui/trashcanopen.png");
+	private static final int TRASH_BOX = 44;   // clickable/drop area
+	private static final int TRASH_ICON = 32;  // 16px texture drawn at 2x
+	private static final int TRASH_MARGIN = 10;
+
 	private ImageEntry dragging;
 	private int grabX;
 	private int grabY;
@@ -36,13 +46,42 @@ public class MoveScreen extends Screen {
 
 		Font f = this.font;
 		String l1 = "Drag images with left mouse  |  Scroll over an image to resize";
-		String l2 = "Press ESC or the Move key again to finish";
+		String l2 = "Drag an image onto the trash can to delete it  |  ESC or the Move key to finish";
 		graphics.text(f, l1, (this.width - f.width(l1)) / 2, 8, 0xFFFFFFFF);
 		graphics.text(f, l2, (this.width - f.width(l2)) / 2, 20, 0xFFAAAAAA);
+		drawTrash(graphics, mouseX, mouseY);
+
 		if (ImageManager.entries().isEmpty()) {
 			String l3 = "No images yet. Open the image menu to add some.";
 			graphics.text(f, l3, (this.width - f.width(l3)) / 2, this.height / 2, 0xFFFFFF80);
 		}
+	}
+
+	private int trashX() {
+		return this.width - TRASH_BOX - TRASH_MARGIN;
+	}
+
+	private int trashY() {
+		return this.height - TRASH_BOX - TRASH_MARGIN;
+	}
+
+	private boolean overTrash(double mx, double my) {
+		return mx >= trashX() && mx < trashX() + TRASH_BOX
+				&& my >= trashY() && my < trashY() + TRASH_BOX;
+	}
+
+	private void drawTrash(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
+		boolean armed = dragging != null && overTrash(mouseX, mouseY);
+		int x = trashX();
+		int y = trashY();
+
+		graphics.fill(x, y, x + TRASH_BOX, y + TRASH_BOX, armed ? 0xB0C03030 : 0x90000000);
+		graphics.outline(x, y, TRASH_BOX, TRASH_BOX, armed ? 0xFFFF6060 : 0x90FFFFFF);
+
+		int off = (TRASH_BOX - TRASH_ICON) / 2;
+		// Scales the 16x16 icon up to 32x32 (u, v, drawW, drawH, regionW, regionH, texW, texH)
+		graphics.blit(RenderPipelines.GUI_TEXTURED, armed ? TRASH_OPEN : TRASH_CLOSED,
+				x + off, y + off, 0f, 0f, TRASH_ICON, TRASH_ICON, 16, 16, 16, 16);
 	}
 
 	private ImageEntry topAt(double mx, double my) {
@@ -83,8 +122,13 @@ public class MoveScreen extends Screen {
 	@Override
 	public boolean mouseReleased(MouseButtonEvent event) {
 		if (dragging != null) {
+			ImageEntry released = dragging;
 			dragging = null;
-			ImageManager.save();
+			if (overTrash(event.x(), event.y())) {
+				ImageManager.remove(released); // also frees its texture and saves
+			} else {
+				ImageManager.save();
+			}
 			return true;
 		}
 		return super.mouseReleased(event);
